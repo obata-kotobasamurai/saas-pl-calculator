@@ -80,6 +80,46 @@ deals_per_rep_q = st.sidebar.slider(
     step=1
 )
 
+# === POC SETTINGS ===
+st.sidebar.subheader("🔬 PoC設定")
+
+poc_duration_days = st.sidebar.slider(
+    "PoC期間（日数）",
+    min_value=30,
+    max_value=180,
+    value=100,
+    step=10
+)
+
+poc_fee_ratio = st.sidebar.slider(
+    "PoC upfront費用（対ACV比率）",
+    min_value=0.0,
+    max_value=0.5,
+    value=1.0/6.0,
+    step=0.01,
+    format="%.2f"
+)
+st.sidebar.write(f"= ACV × {poc_fee_ratio:.2%}")
+
+poc_eng_allocation = st.sidebar.slider(
+    "PoC期間中のエンジニア割当（人）",
+    min_value=0.0,
+    max_value=3.0,
+    value=0.5,
+    step=0.1
+)
+
+# === CS SETTINGS ===
+st.sidebar.subheader("👨‍💼 カスタマーサクセス")
+
+cs_meeting_hours_per_month = st.sidebar.slider(
+    "月次MTG時間/顧客（時間）",
+    min_value=0.0,
+    max_value=8.0,
+    value=1.0,
+    step=0.5
+)
+
 # === TEAM SIZE ===
 st.sidebar.subheader("👔 年度別チーム規模")
 st.sidebar.write("※創業者除く追加採用人数")
@@ -156,27 +196,47 @@ def calculate_pl():
     active_customers = 0
     mrr = 0
     total_customers_acquired = 0
+    poc_customers = []  # List of {contract_month, acv, count}
+    poc_months = int(poc_duration_days / 30)  # Convert days to months
 
     for month in range(months):
         quarter = month // 3
 
-        # New customers this month (deals close at end of quarter)
+        # New contracts this month (deals close at end of quarter)
         # Founders also do sales, so total sales people = hired sales + founders
-        new_customers = 0
+        new_contracts = 0
         if month % 3 == 2:  # End of quarter
             team = team_by_month[month]
             total_sales_people = team['sales'] + num_founders
-            new_customers = total_sales_people * deals_per_rep_q
-            total_customers_acquired += new_customers
+            new_contracts = total_sales_people * deals_per_rep_q
+            total_customers_acquired += new_contracts
+
+            # Add to PoC list
+            if new_contracts > 0:
+                poc_customers.append({
+                    'contract_month': month,
+                    'acv': blended_acv,
+                    'count': new_contracts
+                })
+
+        # Check for PoC completions (customers moving to active)
+        new_active_from_poc = 0
+        for poc in poc_customers[:]:  # Iterate over copy
+            if month - poc['contract_month'] >= poc_months:
+                new_active_from_poc += poc['count']
+                poc_customers.remove(poc)
 
         # Churn
         churned_customers = active_customers * (monthly_churn / 100)
 
-        # Net customers
-        active_customers = active_customers - churned_customers + new_customers
+        # Net active customers
+        active_customers = active_customers - churned_customers + new_active_from_poc
 
-        # MRR calculation
-        mrr_from_new = new_customers * (blended_acv / 12)
+        # Count current PoC customers
+        customers_in_poc = sum(poc['count'] for poc in poc_customers)
+
+        # MRR calculation (only from active customers)
+        mrr_from_new = new_active_from_poc * (blended_acv / 12)
         mrr_churn = churned_customers * (blended_acv / 12)
 
         # Expansion (annual, so 1/12 per month)
@@ -187,15 +247,17 @@ def calculate_pl():
 
         arr = mrr * 12
 
-        # Implementation fees (one-time)
-        impl_fees = new_customers * blended_acv * (implementation_fee_pct / 100)
+        # PoC fees (one-time, at contract signing)
+        poc_fees = new_contracts * blended_acv * poc_fee_ratio
 
         # Total revenue
-        total_revenue = mrr + impl_fees
+        total_revenue = mrr + poc_fees
 
         # Costs
         team = team_by_month[month]
-        personnel_costs = (
+
+        # Base personnel costs
+        base_personnel_costs = (
             team['sales'] * sales_comp / 12 +
             team['cs'] * cs_comp / 12 +
             team['eng'] * eng_comp / 12 +
@@ -203,7 +265,21 @@ def calculate_pl():
             num_founders * founder_salary / 12  # Add founder compensation
         )
 
-        # COGS applied to total revenue (including impl fees)
+        # PoC engineering cost (engineers allocated to PoC customers)
+        poc_eng_cost = 0
+        if customers_in_poc > 0:
+            poc_eng_cost = poc_eng_allocation * eng_comp / 12
+
+        # CS meeting cost (monthly meetings with active customers)
+        # Assuming 160 hours/month work time
+        monthly_work_hours = 160
+        cs_hourly_rate = cs_comp / 12 / monthly_work_hours if monthly_work_hours > 0 else 0
+        cs_meeting_cost = active_customers * cs_meeting_hours_per_month * cs_hourly_rate
+
+        # Total personnel costs
+        personnel_costs = base_personnel_costs + poc_eng_cost + cs_meeting_cost
+
+        # COGS applied to total revenue (including PoC fees)
         cogs = total_revenue * (cogs_pct / 100)
         total_costs = personnel_costs + cogs + monthly_overhead
 
@@ -218,15 +294,19 @@ def calculate_pl():
             'month': month + 1,
             'year': (month // 12) + 1,
             'quarter': f"Y{(month // 12) + 1}Q{(month % 12 // 3) + 1}",
-            'new_customers': new_customers,
+            'new_contracts': new_contracts,
+            'customers_in_poc': customers_in_poc,
+            'new_active_from_poc': new_active_from_poc,
             'churned_customers': churned_customers,
             'active_customers': active_customers,
             'mrr': mrr,
             'arr': arr,
-            'impl_fees': impl_fees,
+            'poc_fees': poc_fees,
             'total_revenue': total_revenue,
             'cogs': cogs,
             'personnel_costs': personnel_costs,
+            'poc_eng_cost': poc_eng_cost,
+            'cs_meeting_cost': cs_meeting_cost,
             'overhead': monthly_overhead,
             'total_costs': total_costs,
             'gross_profit': gross_profit,
@@ -240,6 +320,32 @@ def calculate_pl():
 
 # Calculate
 df = calculate_pl()
+
+# ============================================
+# ASSUMPTIONS SUMMARY
+# ============================================
+st.info(f"""
+### 📋 ビジネスモデルの前提条件
+
+**🔬 PoCプロセス:**
+- PoC期間: **{poc_duration_days}日（約{int(poc_duration_days/30)}ヶ月）**
+- PoC upfront費用: **ACV × {poc_fee_ratio:.1%}**
+- 契約締結 → {poc_duration_days}日間のPoC → MRR開始
+
+**👨‍💼 カスタマーサクセス:**
+- 月次定例MTG: **{cs_meeting_hours_per_month}時間/顧客/月**
+
+**💰 価格構成:**
+- スモール: ¥{small_price/1_000_000:.1f}M ({small_mix}%)
+- ミドル: ¥{mid_price/1_000_000:.1f}M ({mid_mix}%)
+- エンタープライズ: ¥{enterprise_price/1_000_000:.1f}M ({enterprise_mix}%)
+
+**👥 チーム構成:**
+- 創業者: {num_founders}名（報酬: ¥{founder_salary/1_000_000:.1f}M/年/人）
+- 創業者もセールス活動を実施
+""")
+
+st.markdown("---")
 
 # ============================================
 # DISPLAY RESULTS
@@ -296,13 +402,25 @@ with tab1:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # MRR vs Implementation Fees
+    # MRR vs PoC Fees
     st.subheader("月次売上内訳")
     fig2 = go.Figure()
     fig2.add_trace(go.Bar(x=df['month'], y=df['mrr'], name='MRR', marker_color='lightblue'))
-    fig2.add_trace(go.Bar(x=df['month'], y=df['impl_fees'], name='導入費用', marker_color='orange'))
+    fig2.add_trace(go.Bar(x=df['month'], y=df['poc_fees'], name='PoC費用', marker_color='orange'))
     fig2.update_layout(barmode='stack', height=400, xaxis_title="月", yaxis_title="売上 (¥)")
     st.plotly_chart(fig2, use_container_width=True)
+
+    # PoC pipeline visualization
+    st.subheader("PoC〜アクティブ顧客の推移")
+    fig2b = go.Figure()
+    fig2b.add_trace(go.Scatter(x=df['month'], y=df['customers_in_poc'],
+                               mode='lines', name='PoC中の顧客',
+                               line=dict(color='orange', width=2)))
+    fig2b.add_trace(go.Scatter(x=df['month'], y=df['active_customers'],
+                               mode='lines', name='アクティブ顧客',
+                               line=dict(color='green', width=2)))
+    fig2b.update_layout(height=400, xaxis_title="月", yaxis_title="顧客数")
+    st.plotly_chart(fig2b, use_container_width=True)
 
 with tab2:
     st.subheader("収益性分析")
@@ -348,12 +466,20 @@ with tab3:
 
     # Unit Economics
     st.subheader("ユニットエコノミクス")
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
 
-    # Calculate CAC
-    total_sales_cost = df['personnel_costs'].sum() * (sales_y1 + sales_y2 + sales_y3 + num_founders * 3) / (3 * (sales_y1 + sales_y2 + sales_y3 + cs_y1 + cs_y2 + cs_y3 + eng_y1 + eng_y2 + eng_y3 + ga_y1 + ga_y2 + ga_y3 + num_founders))
-    total_customers = df['new_customers'].sum()
-    cac = total_sales_cost / total_customers if total_customers > 0 else 0
+    # Calculate CAC with PoC costs
+    # CAC = (Sales costs + PoC eng costs - PoC revenue) / Acquired customers
+    total_sales_personnel_cost = (
+        (sales_y1 + sales_y2 + sales_y3) * sales_comp +
+        num_founders * founder_salary * 3  # All 3 years
+    )
+    total_poc_eng_cost = df['poc_eng_cost'].sum()
+    total_poc_revenue = df['poc_fees'].sum()
+
+    total_acquisition_cost = total_sales_personnel_cost + total_poc_eng_cost - total_poc_revenue
+    total_customers_acquired = df['new_contracts'].sum()
+    cac = total_acquisition_cost / total_customers_acquired if total_customers_acquired > 0 else 0
 
     # Blended ACV
     blended_acv = (
@@ -362,23 +488,30 @@ with tab3:
         enterprise_price * (enterprise_mix / 100)
     )
 
-    # LTV (simplified)
+    # LTV (with PoC duration consideration)
+    # Customer lifetime in months (after PoC)
     avg_customer_lifetime_months = 1 / (monthly_churn / 100) if monthly_churn > 0 else 60
-    ltv = (blended_acv / 12) * avg_customer_lifetime_months
+    # Average monthly value considering expansion
+    avg_monthly_value = (blended_acv / 12) * (1 + annual_expansion / 100 / 2)  # Simplified expansion
+    ltv = avg_monthly_value * avg_customer_lifetime_months
 
     with col1:
         st.metric("ブレンドACV", f"¥{blended_acv/1_000_000:.2f}M")
     with col2:
-        st.metric("推定CAC", f"¥{cac/1_000_000:.2f}M")
+        st.metric("CAC（PoC込み）", f"¥{cac/1_000_000:.2f}M")
     with col3:
         ltv_cac = ltv / cac if cac > 0 else 0
         st.metric("LTV:CAC比率", f"{ltv_cac:.1f}x")
+    with col4:
+        payback_months = (cac / (blended_acv / 12)) if blended_acv > 0 else 0
+        st.metric("CAC回収期間", f"{payback_months:.1f}ヶ月")
 
 with tab4:
     st.subheader("年次サマリー")
 
     annual = df.groupby('year').agg({
-        'new_customers': 'sum',
+        'new_contracts': 'sum',
+        'new_active_from_poc': 'sum',
         'active_customers': 'last',
         'arr': 'last',
         'total_revenue': 'sum',
@@ -393,14 +526,15 @@ with tab4:
     annual['total_costs'] = (annual['total_costs'] / 1_000_000).round(1)
     annual['operating_profit'] = (annual['operating_profit'] / 1_000_000).round(1)
 
-    annual.columns = ['年', '新規顧客数', 'アクティブ顧客数（期末）', 'ARR (¥M)',
+    annual.columns = ['年', '新規契約数', 'PoC完了数', 'アクティブ顧客数（期末）', 'ARR (¥M)',
                       '売上 (¥M)', '費用 (¥M)', '営業利益 (¥M)', 'チーム規模', '営業利益率 %']
 
     st.dataframe(annual, use_container_width=True, hide_index=True)
 
     # Full monthly table (expandable)
     with st.expander("月次データ詳細を表示"):
-        display_df = df[['month', 'quarter', 'new_customers', 'active_customers',
+        display_df = df[['month', 'quarter', 'new_contracts', 'customers_in_poc',
+                         'new_active_from_poc', 'active_customers',
                          'mrr', 'arr', 'total_revenue', 'total_costs', 'operating_profit',
                          'operating_margin']].copy()
         display_df['mrr'] = (display_df['mrr'] / 1_000_000).round(2)
@@ -410,7 +544,7 @@ with tab4:
         display_df['operating_profit'] = (display_df['operating_profit'] / 1_000_000).round(2)
         display_df['operating_margin'] = display_df['operating_margin'].round(1)
 
-        display_df.columns = ['月', '四半期', '新規顧客', 'アクティブ顧客',
+        display_df.columns = ['月', '四半期', '新規契約', 'PoC中', 'PoC完了', 'アクティブ顧客',
                               'MRR (¥M)', 'ARR (¥M)', '売上 (¥M)', '費用 (¥M)',
                               '営業利益 (¥M)', '営業利益率 %']
 
