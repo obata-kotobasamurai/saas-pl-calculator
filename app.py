@@ -161,7 +161,15 @@ annual_expansion = st.sidebar.slider("年間拡張率 %", 0, 50, 10, 5)
 # === OTHER COSTS ===
 st.sidebar.subheader("💸 その他コスト")
 monthly_overhead = st.sidebar.number_input("月次固定費 (¥)", 0, 5_000_000, 500_000, 100_000)
-cogs_pct = st.sidebar.slider("売上原価（売上に対する%）", 0, 50, 15, 5)
+
+st.sidebar.write("**年度別 売上原価（COGS）**")
+col1, col2, col3 = st.sidebar.columns(3)
+with col1:
+    cogs_pct_y1 = st.slider("1年目 %", 0, 100, 50, 5, key="cogs_y1")
+with col2:
+    cogs_pct_y2 = st.slider("2年目 %", 0, 100, 30, 5, key="cogs_y2")
+with col3:
+    cogs_pct_y3 = st.slider("3年目 %", 0, 100, 20, 5, key="cogs_y3")
 
 # ============================================
 # CALCULATION ENGINE
@@ -279,8 +287,16 @@ def calculate_pl():
         # Total personnel costs
         personnel_costs = base_personnel_costs + poc_eng_cost + cs_meeting_cost
 
-        # COGS applied to total revenue (including PoC fees)
-        cogs = total_revenue * (cogs_pct / 100)
+        # COGS applied to total revenue (including PoC fees) - by year
+        year = month // 12
+        if year == 0:
+            current_cogs_pct = cogs_pct_y1
+        elif year == 1:
+            current_cogs_pct = cogs_pct_y2
+        else:
+            current_cogs_pct = cogs_pct_y3
+
+        cogs = total_revenue * (current_cogs_pct / 100)
         total_costs = personnel_costs + cogs + monthly_overhead
 
         # Profit
@@ -339,6 +355,11 @@ st.info(f"""
 - スモール: ¥{small_price/1_000_000:.1f}M ({small_mix}%)
 - ミドル: ¥{mid_price/1_000_000:.1f}M ({mid_mix}%)
 - エンタープライズ: ¥{enterprise_price/1_000_000:.1f}M ({enterprise_mix}%)
+
+**📊 売上原価（COGS）:**
+- 1年目: **{cogs_pct_y1}%**
+- 2年目: **{cogs_pct_y2}%**
+- 3年目: **{cogs_pct_y3}%**
 
 **👥 チーム構成:**
 - 創業者: {num_founders}名（報酬: ¥{founder_salary/1_000_000:.1f}M/年/人）
