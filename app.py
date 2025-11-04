@@ -10,7 +10,7 @@ st.set_page_config(page_title="SaaS P&L 計算機", layout="wide", initial_sideb
 
 # Title
 st.title("🚀 SaaS P&L 計算機")
-st.markdown("**目標: 3年で年間経常収益（ARR）1億円**")
+st.markdown("**目標: 3年で営業利益1億円**")
 st.markdown("---")
 
 # Sidebar for inputs
@@ -203,7 +203,8 @@ def calculate_pl():
             num_founders * founder_salary / 12  # Add founder compensation
         )
 
-        cogs = mrr * (cogs_pct / 100)
+        # COGS applied to total revenue (including impl fees)
+        cogs = total_revenue * (cogs_pct / 100)
         total_costs = personnel_costs + cogs + monthly_overhead
 
         # Profit
@@ -249,18 +250,21 @@ col1, col2, col3, col4 = st.columns(4)
 
 final_arr = df.iloc[-1]['arr']
 year3_arr = df[df['year'] == 3]['arr'].iloc[-1]
-goal_pct = (year3_arr / 100_000_000) * 100
+
+# Calculate annual operating profit for year 3
+year3_annual_profit = df[df['year'] == 3]['operating_profit'].sum()
+profit_goal_pct = (year3_annual_profit / 100_000_000) * 100
 
 with col1:
-    st.metric("3年目のARR", f"¥{year3_arr/1_000_000:.1f}M", f"目標の{goal_pct:.0f}%")
+    st.metric("3年目の年間営業利益", f"¥{year3_annual_profit/1_000_000:.1f}M", f"目標の{profit_goal_pct:.0f}%")
 with col2:
-    st.metric("最終MRR", f"¥{df.iloc[-1]['mrr']/1_000_000:.1f}M")
+    st.metric("3年目のARR", f"¥{year3_arr/1_000_000:.1f}M")
 with col3:
     final_customers = df.iloc[-1]['active_customers']
     st.metric("アクティブ顧客数（3年目終了時）", f"{final_customers:.0f}")
 with col4:
     final_margin = df.iloc[-1]['operating_margin']
-    st.metric("営業利益率（最終）", f"{final_margin:.1f}%")
+    st.metric("営業利益率（最終月）", f"{final_margin:.1f}%")
 
 st.markdown("---")
 
